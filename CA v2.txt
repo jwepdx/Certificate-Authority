@@ -1,0 +1,167 @@
+#!/bin/bash
+
+#Get Variables From File
+cat /etc/CA/config/vars.txt
+
+#Ensures Root Privledges
+if [ "$(id -u)" != "0" ]; then
+	exec sudo "$0" "$@"
+fi
+
+##############
+#Command Line#
+##############
+Create-CA () {
+  if [[ $2 = "-h" ]] || [[ $2 = "help" ]]; then
+    echo "Usage CA -ca [CA Name] [Key Length]"
+    exit 0
+  elif [[ -n $2 ]]; then
+   CANAME=$2
+  else
+    read -p "What is the name of your certificate authority?: " CANAME
+  fi
+  mkdir $CADIREC1/$CANAME
+  CADIREC2=$CADIREC1/$CANAME
+  if [[ -n $3 ]]; then
+    KEYLENGTH=$3
+  fi
+  openssl genrsa -des3 -out $CADIREC2/$CANAME.key $KEYLENGTH
+  openssl req -x509 -new -nodes -key $CADIREC2/$CANAME.key -sha256 -days 1825 -out $CADIREC2/$CANAME.pem -subj "/C=$C/ST=$ST/L=$L/O=$O/OU=$OU/CN=$CN"
+  exit 0
+}
+
+Create-SubCA () {
+  if [[ $2 = "-h" ]] || [[ $2 = "help" ]]; then
+    echo "Usage CA -c [Root CA Name] [Sub CA Name] [Key Length]"
+    exit 0
+  elif [[ -n $2 ]]; then
+   cadirec=$CADIREC/$2
+   CA=$2
+  else
+   ls '$CADIREC'
+   read -p "Choose the root CA folder (e.g. CA1): " CA
+   cadirec=$CADIREC/$CA
+  fi
+  if [[ $3 = "" ]] || [[ $3 = """" ]]; then
+   read -p "What is the name of your sub certificate authority?: " SUBCANAME
+  else
+   SUBCANAME=$3
+  fi
+  if [[ -n $4 ]]; then
+    KEYLENGTH=$4
+  fi
+  mkdir $cadirec/$SUBCANAME
+  SUBCADIREC=$cadirec/$SUBCANAME
+  openssl genrsa -out $SUBCADIREC/$SUBCANAME.key $KEYLENGTH
+  openssl req -new -key $SUBCADIREC/$SUBCANAME.key -out $SUBCADIREC/$SUBCANAME.csr -subj "/C=$C/ST=$ST/L=$L/O=$O/OU=$OU/CN=$CN"
+  openssl x509 -req -in $SUBCADIREC/$SUBCANAME.csr -CA $cadirec/$CA.pem -CAkey $cadirec/$CA.key -CAcreateserial -out $SUBCADIREC/$SUBCANAME.pem -days 1825 -sha256
+  exit 0
+}
+
+Create-Cert () {
+  if [[ $2 = "-h" ]] || [[ $2 = "help" ]]; then
+    echo "Usage CA -c [Root CA Name] [Sub CA Name] [Server Domain Name] [Key Length] [Upto 4 Subject Alternative Names]"
+    exit 0
+  elif [[ -n $2 ]]; then
+   cadirec=$CADIREC/$2
+   CA=$2
+  else
+   ls $CADIREC
+   read -p "Choose the root CA folder (e.g. CA1): " CA
+   cadirec=$CADIREC/$CA
+  fi
+  if [[ $3 = "" ]] || [[ $3 = """" ]]; then
+   ls $cadirec
+   read -p "What is the name of your sub certificate authority?: " SUBCANAME
+  else
+   SUBCANAME=$3
+  fi
+  SUBCADIREC=$cadirec/$SUBCANAME
+  if [[ -n $4 ]]; then
+    DN=$4
+  else
+    read -p "What is the domain name for your server?: " DN
+  fi
+  if [[ -n $5 ]]; then
+    KEYLENGTH=$5
+  fi
+  mkdir $SUBCADIREC/$DN
+  CERTFILES=$SUBCADIREC/$DN
+  openssl genrsa -out $CERTFILES/$DN.key $KEYLENGTH
+  openssl req -new -key $CERTFILES/$DN.key -out $CERTFILES/$DN.csr -subj "/C=$C/ST=$ST/L=$L/O=$O/OU=$OU/CN=$DN"
+  echo "authorityKeyIdentifier=keyid,issuer
+basicConstraints=CA:FALSE
+keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = '$DN'" > $CERTFILES/config.cnf
+ 
+ if [[ -n $6 ]]; then
+  echo "DNS.2 = '$6'" >> $CERTFILES/config.cnf
+  if [[ -n $7 ]]; then
+    echo "DNS.3 = '$7'" >> $CERTFILES/config.cnf
+    if [[ -n $8 ]]; then
+     echo "DNS.4 = '$8'" >> $CERTFILES/config.cnf
+     if [[ -n $9 ]]; then
+       echo "DNS.5 = '$9'" >> $CERTFILES/config.cnf
+     fi
+    fi
+   fi
+ fi
+ openssl x509 -req -in $CERTFILES/$DN.csr -CA $SUBCADIREC/$SUBCANAME.pem -CAkey $SUBCADIREC/$SUBCANAME.key -CAcreateserial -out $CERTFILES/$DN.crt -days 1825 -sha256 -extfile $CERTFILES/config.cnf
+ exit 0
+}
+
+##################
+#Whiptail Prompts#
+##################
+Create-CA-whptail () {
+echo "Create CA"
+}
+
+Create-Sub-CA-whiptail () {
+echo "Create Sub CA"
+}
+
+Create-Cert-Whiptail () {
+echo "Create Cert"
+}
+
+Help () {
+	echo "Usage: CA [options]
+	Add -h for help
+
+	-ca, -CA      Create Certificate Authority
+	-sub, -subca  Create Sub Certificate Authority
+	-cert, -c     Create Certificate For Device";
+	exit 0
+}
+
+Whiptail-Menu () {
+	MENU=$(whiptail --title "Certificate Authority" --menu "Choose option" 25 78 16 \
+	"Create CA" "Create A Root Certificate Authority." \
+	"Create Sub CA" "Create A Sub Section of The CA." \
+	"Create Client Cert" "Create A Certificate For A Client." 3>&1 1>&2 2>&3)
+
+	case $MENU in
+		"Create CA"		) Create-CA-Whiptail;;
+		"Create Sub CA		) Create-Sub-CA;;
+		"Create Client Cert"	) Create-Cert-Whiptail;;
+	esac
+}
+
+if [[ $# = 0 ]]; then
+	Whiptail-Menu
+	exit 0
+fi
+
+case "${1}" in
+	"-ca" | "-CA"     ) Create-CA "$@";;
+	"-sub" | "subca"  ) Create-SubCA "$@";;
+	"-cert" | "-c"    ) Create-Cert "$@";;
+	"-gui" | "gui"    ) Whiptail-Menu;;
+	"-h" | "help"     ) Help;;
+esac
+
+
